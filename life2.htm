@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Balanced ALife Sandbox</title>
+    <style>
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            overflow: hidden; background-color: #050508; font-family: monospace;
+        }
+        canvas { display: block; width: 100%; height: 100%; }
+        #telemetry {
+            position: absolute; top: 15px; left: 15px;
+            background: rgba(5, 5, 8, 0.9); color: #fff; padding: 15px;
+            border-radius: 6px; border: 1px solid #222; pointer-events: none;
+            line-height: 1.6; font-size: 0.9rem;
+        }
+        .pink-txt { color: #ff52a2; font-weight: bold; }
+        .blue-txt { color: #00d2ff; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div id="telemetry">
+        <strong>ALIFE ECOSYSTEM LOG</strong><br>
+        Total Population: <span id="popTotal">14</span><br>
+        Females (<span class="pink-txt">F</span>): <span id="popFemales">7</span><br>
+        Males (<span class="blue-txt">M</span>): <span id="popMales">7</span>
+    </div>
+
+    <canvas id="sandboxCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('sandboxCanvas');
+        const ctx = canvas.getContext('2d');
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        const INITIAL_POPULATION = 14;
+        const BREED_COOLDOWN_MAX = 180; 
+        
+        const creatures = [];
+        const scentTrails = [];
+
+//b2a
+        class Creature {
+            constructor(x, y, gender, isBaby = false) {
+                this.x = x;
+                this.y = y;
+                this.gender = gender; 
+                this.color = this.gender === 'f' ? '#ff52a2' : '#00d2ff';
+                this.breedCooldownAge = 0;
+                this.opacity = 1;
+                this.isDead = false;
+
+                // 1. RANDOM STARTING AGE SETTING
+                this.age = isBaby ? 1.0 : Math.random() * 4 + 3; 
+
+                // 2. BELL-CURVE PREDETERMINED MAX LIFESPAN SELECTION (Peaks around age 7-8)
+                const u1 = Math.random();
+                const u2 = Math.random();
+                const normalRandom = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+                
+                // Map the Gaussian normal curve to a lifespan minimum of 4 and absolute max of 9.99
+                this.maxLifespan = 7.5 + normalRandom * 1.5; 
+                this.maxLifespan = Math.max(4.0, Math.min(9.99, this.maxLifespan));
+
+                // Physics base configuration
+                this.baseSpeed = Math.random() * 1.2 + 0.8; 
+                const angle = Math.random() * Math.PI * 2;
+                this.vx = Math.cos(angle) * this.baseSpeed;
+                this.vy = Math.sin(angle) * this.baseSpeed;
+            }
+
+            get radius() {
+                // Keep the pixel footprint locked to a max of 9px even if internal age hits 9.99
+                return Math.max(1, Math.min(9, Math.floor(this.age)));
+            }
+
+//b2b
+            update() {
+                this.age += 0.0012; // Gradual growth scale
+
+                // 1. ADVANCED DEATH ARCS (10.0+ Fading Ghost Override)
+                if (this.age >= this.maxLifespan) {
+                    this.opacity -= 0.004; 
+                    if (this.opacity <= 0) { this.isDead = true; return; }
+                }
+                if (this.age >= 10.0) {
+                    this.vx = 0; this.vy = 0; // Freeze ghosts in place
+                }
+
+                // 2. CHECK IF TOUCHING ANYONE ELSE (WITH SCENT CLEARING SPRAY)
+                let isTouchingAnyone = false;
+                if (this.age < this.maxLifespan) { 
+                    for (let k = 0; k < creatures.length; k++) {
+                        const other = creatures[k];
+                        if (other !== this && other.age < other.maxLifespan) {
+                            const tDx = other.x - this.x; const tDy = other.y - this.y;
+                            if (Math.sqrt(tDx * tDx + tDy * tDy) < this.radius + other.radius + 4) { 
+                                isTouchingAnyone = true;
+                                for (let s = scentTrails.length - 1; s >= 0; s--) {
+                                    const trail = scentTrails[s];
+                                    if (Math.sqrt((trail.x - this.x)**2 + (trail.y - this.y)**2) < 100) {
+                                        scentTrails.splice(s, 1); 
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                const isFemaleFleeing = this.gender === 'f' && this.breedCooldownAge && this.age < this.breedCooldownAge;
+                const isMaleFrozen = this.gender === 'm' && this.breedCooldownAge && this.age < this.breedCooldownAge;
+                
+                if (this.radius >= 4 && this.radius < 8 && !isFemaleFleeing && !isMaleFrozen && !isTouchingAnyone && this.age < this.maxLifespan && Math.random() < 0.1) {
+                    scentTrails.push({ x: this.x, y: this.y, gender: this.gender, intensity: 1.0 });
+                }
+
+                let isOverridden = isMaleFrozen || isFemaleFleeing || (this.age >= 10.0);
+
+                // 3. FEMALE FLIGHT CONTROL
+                if (isFemaleFleeing && this.age < this.maxLifespan) {
+                    for (let k = 0; k < creatures.length; k++) {
+                        const other = creatures[k];
+                        if (other.gender === 'm' && other.age < other.maxLifespan) {
+                            const fDx = other.x - this.x; const fDy = other.y - this.y;
+                            if (Math.sqrt(fDx * fDx + fDy * fDy) < 150) {
+                                const escapeAngle = Math.atan2(-fDy, -fDx);
+                                this.vx = Math.cos(escapeAngle) * (this.baseSpeed * 1.5);
+                                this.vy = Math.sin(escapeAngle) * (this.baseSpeed * 1.5);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // 4. STANDARD NAVIGATION WITH DENSITY-DEPENDENT BLINDNESS
+                if (!isOverridden && this.age < this.maxLifespan) {
+                    let trackingTarget = null; let maxDesire = -1;
+                    if (this.radius >= 4) {
+                        const currentDigit = Math.floor(this.radius);
+                        const interestMap = { 4: 0.90, 5: 0.60, 6: 0.40, 7: 0.30, 8: 0.20, 9: 0.10 };
+                        const activeInterest = interestMap[currentDigit] !== undefined ? interestMap[currentDigit] : 0.10;
+
+                        // ENVIRONMENT SAFETY VALVE: Calculate dynamic sensor radius based on population density
+                        // Under 50 pop = 120px full range. Over 100 pop = 0px range (complete scent blindness).
+                        let maxScentRange = 120;
+                        if (creatures.length >= 100) {
+                            maxScentRange = 0;
+                        } else if (creatures.length > 50) {
+                            // Linearly shrink range from 120px down to 0px between 50 and 100 pop
+                            const factor = (creatures.length - 50) / 50;
+                            maxScentRange = 120 * (1 - factor);
+                        }
+
+                        let isSenileMoment = (currentDigit >= 7 && Math.random() > activeInterest);
+                        
+                        // Only evaluate trails if the adaptive sensor range is greater than 0
+                        if (Math.random() < activeInterest && !isSenileMoment && maxScentRange > 0) {
+                            for (let i = 0; i < scentTrails.length; i++) {
+                                const trail = scentTrails[i];
+                                if (trail.gender !== this.gender) {
+                                    const dist = Math.sqrt((trail.x - this.x)**2 + (trail.y - this.y)**2);
+                                    
+                                    // Use the dynamically squeezed maxScentRange boundary
+                                    if (dist < maxScentRange && dist > 15) {
+                                        const followChance = 0.75 * trail.intensity * (1 - (dist / maxScentRange));
+                                        if (followChance > maxDesire) { maxDesire = followChance; trackingTarget = trail; }
+                                    }
+                                }
+                            }
+                        }
+                        if (isSenileMoment && Math.random() < 0.15) {
+                            this.vx = (Math.random() - 0.5) * (this.baseSpeed * 2); this.vy = (Math.random() - 0.5) * (this.baseSpeed * 2);
+                        }
+                    }
+
+                    if (trackingTarget && Math.random() < maxDesire) {
+                        const tAngle = Math.atan2(trackingTarget.y - this.y, trackingTarget.x - this.x);
+                        this.vx = Math.cos(tAngle) * (this.baseSpeed * 1.25); this.vy = Math.sin(tAngle) * (this.baseSpeed * 1.25);
+                    } else if (Math.random() < 0.05) { 
+                        this.vx += (Math.random() - 0.5) * 0.6; this.vy += (Math.random() - 0.5) * 0.6;
+                        const currSpeed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+                        if (currSpeed > this.baseSpeed) { this.vx = (this.vx / currSpeed) * this.baseSpeed; this.vy = (this.vy / currSpeed) * this.baseSpeed; }
+                    }
+                }
+
+                this.x += this.vx; this.y += this.vy;
+
+                if (this.x - this.radius < 0) { this.x = this.radius; this.vx = Math.abs(this.vx); }
+                if (this.x + this.radius > canvas.width) { this.x = canvas.width - this.radius; this.vx = -Math.abs(this.vx); }
+                if (this.y - this.radius < 0) { this.y = this.radius; this.vy = Math.abs(this.vy); }
+                if (this.y + this.radius > canvas.height) { this.y = canvas.height - this.radius; this.vy = -Math.abs(this.vy); }
+            }
+
+            draw() {
+                ctx.save(); ctx.globalAlpha = this.opacity;
+                ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color; ctx.fill();
+                
+                if (this.gender === 'm' && this.breedCooldownAge && this.age < this.breedCooldownAge && this.age < this.maxLifespan) {
+                    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1; ctx.stroke(); 
+                }
+                if ((this.gender === 'f' && this.radius >= 4 && this.radius <= 7) || (this.gender === 'm' && this.radius >= 4 && this.radius <= 8)) {
+                    if (this.age < this.maxLifespan) { ctx.fillStyle = '#ffffff'; ctx.fillRect(this.x - 1, this.y - 1, 2, 2); }
+                }
+                ctx.restore();
+            }
+        }
+
+//b3
+         function initEcosystem() {
+            for (let i = 0; i < INITIAL_POPULATION; i++) {
+                const x = Math.random() * canvas.width;
+                const y = Math.random() * canvas.height;
+                creatures.push(new Creature(x, y, i % 2 === 0 ? 'f' : 'm', false));
+            }
+        }
+
+        function processEcosystemMechanics() {
+            for (let i = scentTrails.length - 1; i >= 0; i--) {
+                const trail = scentTrails[i];
+                trail.intensity -= 0.0025; 
+                if (trail.intensity <= 0) { scentTrails.splice(i, 1); continue; }
+                ctx.save(); ctx.globalAlpha = trail.intensity * 0.25;
+                ctx.fillStyle = trail.gender === 'f' ? 'rgba(255, 82, 162, 0.4)' : 'rgba(0, 210, 255, 0.4)';
+                ctx.beginPath(); ctx.arc(trail.x, trail.y, 2, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+            }
+
+            const babiesToBirth = [];
+            
+            if (creatures.length < 75) {
+                for (let i = 0; i < creatures.length; i++) {
+                    for (let j = i + 1; j < creatures.length; j++) {
+                        const c1 = creatures[i]; const c2 = creatures[j];
+                        if (c1.gender !== c2.gender && (!c1.breedCooldownAge || c1.age >= c1.breedCooldownAge) && (!c2.breedCooldownAge || c2.age >= c2.breedCooldownAge)) {
+                            const female = c1.gender === 'f' ? c1 : c2;
+                            const male = c1.gender === 'm' ? c1 : c2;
+
+                            if (female.radius >= 4 && female.radius <= 7 && male.radius >= 4 && male.radius <= 8) {
+                                const dx = male.x - female.x; const dy = male.y - female.y;
+                                if (Math.sqrt(dx * dx + dy * dy) < female.radius + male.radius) {
+                                    
+                                    // SAFETY VALVE: Determine litter size based on current population scarcity
+                                    // Normal pop = 1 kid. Endangered pop (under 10) = 2 to 4 kids at once!
+                                    let litterSize = 1;
+                                    if (creatures.length < 10) {
+                                        litterSize = Math.floor(Math.random() * 3) + 2; 
+                                    }
+
+                                    for (let b = 0; b < litterSize; b++) {
+                                        const sAngle = Math.random() * Math.PI * 2;
+                                        const bx = female.x + Math.cos(sAngle) * (female.radius + 6);
+                                        const by = female.y + Math.sin(sAngle) * (female.radius + 6);
+                                        
+                                        const baby = new Creature(bx, by, Math.random() < 0.5 ? 'f' : 'm', true);
+                                        // Scatter their velocities so they don't ride the same line
+                                        baby.vx = Math.cos(sAngle) * (1.5 + Math.random());
+                                        baby.vy = Math.sin(sAngle) * (1.5 + Math.random());
+                                        
+                                        babiesToBirth.push(baby);
+                                    }
+
+                                    female.breedCooldownAge = female.age + 0.5; 
+                                    male.breedCooldownAge = male.age + 0.2;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            babiesToBirth.forEach(baby => creatures.push(baby));
+
+            let fCount = 0, mCount = 0;
+            for (let i = creatures.length - 1; i >= 0; i--) {
+                const c = creatures[i]; c.update();
+                if (c.isDead) { creatures.splice(i, 1); } 
+                else { c.draw(); if (c.gender === 'f') fCount++; else mCount++; }
+            }
+
+            document.getElementById('popTotal').textContent = creatures.length;
+            document.getElementById('popFemales').textContent = fCount;
+            document.getElementById('popMales').textContent = mCount;
+        }
+
+        function mainLoop() {
+            ctx.fillStyle = '#050508'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            processEcosystemMechanics();
+            requestAnimationFrame(mainLoop);
+        }
+
+        initEcosystem();
+        mainLoop();
+    </script>
+</body>
+</html>

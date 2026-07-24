@@ -281,14 +281,48 @@
                     }
                 }
 
-                // 3. CHECK IF TOUCHING ANYONE ELSE (WITH SCENT CLEARING SPRAY)
+                // 3. CHECK IF TOUCHING ANYONE ELSE AND RESOLVE OVERLAPS (WITH SCENT CLEARING SPRAY)
                 let isTouchingAnyone = false;
                 if (this.age < this.maxLifespan && this.hp > 0) {
                     for (let k = 0; k < creatures.length; k++) {
                         const other = creatures[k];
                         if (other !== this && other.age < other.maxLifespan && other.hp > 0) {
                             const tDx = other.x - this.x; const tDy = other.y - this.y;
-                            if (Math.sqrt(tDx * tDx + tDy * tDy) < this.radius + other.radius + 4) {
+                            const dist = Math.sqrt(tDx * tDx + tDy * tDy);
+                            const minDistance = this.radius + other.radius;
+
+                            if (dist < minDistance) {
+                                isTouchingAnyone = true;
+                                const overlap = minDistance - dist;
+                                if (dist > 0) {
+                                    const pushX = (tDx / dist) * overlap * 0.5;
+                                    const pushY = (tDy / dist) * overlap * 0.5;
+                                    this.x -= pushX;
+                                    this.y -= pushY;
+                                    other.x += pushX;
+                                    other.y += pushY;
+
+                                    // Deflect velocities to bounce off each other
+                                    const angle = Math.atan2(tDy, tDx);
+                                    this.vx = -Math.cos(angle) * this.baseSpeed;
+                                    this.vy = -Math.sin(angle) * this.baseSpeed;
+                                    other.vx = Math.cos(angle) * other.baseSpeed;
+                                    other.vy = Math.sin(angle) * other.baseSpeed;
+                                } else {
+                                    const randAngle = Math.random() * Math.PI * 2;
+                                    this.x -= Math.cos(randAngle) * minDistance * 0.5;
+                                    this.y -= Math.sin(randAngle) * minDistance * 0.5;
+                                    other.x += Math.cos(randAngle) * minDistance * 0.5;
+                                    other.y += Math.sin(randAngle) * minDistance * 0.5;
+                                }
+
+                                for (let s = scentTrails.length - 1; s >= 0; s--) {
+                                    const trail = scentTrails[s];
+                                    if (Math.sqrt((trail.x - this.x)**2 + (trail.y - this.y)**2) < 100) {
+                                        scentTrails.splice(s, 1);
+                                    }
+                                }
+                            } else if (dist < minDistance + 4) {
                                 isTouchingAnyone = true;
                                 for (let s = scentTrails.length - 1; s >= 0; s--) {
                                     const trail = scentTrails[s];

@@ -144,10 +144,11 @@
                         // Check collision to eat prey
                         if (minDist < this.radius + nearestPrey.radius) {
                             // Eat prey
+                            const gainedHp = nearestPrey.hp;
                             nearestPrey.hp = 0;
                             nearestPrey.isDead = true;
-                            // Gain 150 HP
-                            this.hp = Math.min(this.maxHp, this.hp + 150);
+                            // Gain prey's HP
+                            this.hp = Math.min(this.maxHp, this.hp + gainedHp);
                         }
                     } else {
                         // Wander randomly if no prey
